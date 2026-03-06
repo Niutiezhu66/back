@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.atguigu.exam.mapper.NoticeMapper">
+    <select id="selectLatestNotices" resultType="com.atguigu.exam.entity.Notice">
+        SELECT * FROM notices WHERE is_deleted = 0 and is_active = 1 ORDER BY create_time DESC, priority DESC LIMIT #{limit}
+    </select>
+</mapper>

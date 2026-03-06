@@ -1,0 +1,55 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/aaa?characterEncoding=UTF-8&serverTimezone=GMT%2b8&useSSL=false&requireSSL=false
+    username: root
+    password: 123456
+    hikari:
+      connection-test-query: SELECT 1 # 自动检测连接
+      connection-timeout: 60000 #数据库连接超时时间,默认30秒
+      idle-timeout: 500000 #空闲连接存活最大时间，默认600000（10分钟）
+      max-lifetime: 540000 #此属性控制池中连接的最长生命周期，值0表示无限生命周期，默认1800000即30分钟
+      maximum-pool-size: 12 #连接池最大连接数，默认是10
+      minimum-idle: 10 #最小空闲连接数量
+      pool-name: SPHHikariPool # 连接池名称
+
+  data:
+    redis: # redis 配置
+      host: 127.0.0.1
+      port: 6379
+      database: 1
+      password:
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+
+  servlet:
+    multipart:
+      max-file-size: 10MB #上传单个文件最大大小
+      max-request-size: 20MB #一次最多上传多大文件
+
+#minio 相关配置
+minio:
+  endpoint: http://127.0.0.1:9000 # MinIO 端点
+  accessKey: minioadmin # MinIO Access Key
+  secretKey: minioadmin # MinIO Secret Key
+  bucket: aaa # 确认 Bucket 名称（库名）
+
+#kimi API接口调用配置
+kimi:
+  api:
+    baseUrl: https://api.moonshot.cn/v1/chat/completions
+    apiKey: sk-Sj55f2ol9zwINcKOIIa5cmyxs9UEiBSsqLp4wxlDjOp143er
+    model: moonshot-v1-32k #模型
+    temperature: 0.3 #温度
+    maxTokens: 4096  # 最大生成token数， kimi里面不设置的话默认 1024，不够用
+
+#用于打印框架生成的sql语句，便于调试
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    auto-mapping-behavior: full
