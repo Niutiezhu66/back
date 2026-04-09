@@ -1,10 +1,7 @@
 package com.atguigu.exam.service.impl;
 
-import com.atguigu.exam.entity.Video;
-import com.atguigu.exam.entity.VideoCategory;
 import com.atguigu.exam.mapper.VideoCategoryMapper;
 import com.atguigu.exam.mapper.VideoMapper;
-import com.atguigu.exam.service.VideoCategoryService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;

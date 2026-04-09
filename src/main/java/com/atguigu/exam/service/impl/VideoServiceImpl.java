@@ -1,15 +1,10 @@
 package com.atguigu.exam.service.impl;
 
-import com.atguigu.exam.entity.Video;
-import com.atguigu.exam.entity.VideoCategory;
-import com.atguigu.exam.entity.VideoLike;
-import com.atguigu.exam.entity.VideoView;
 import com.atguigu.exam.mapper.VideoCategoryMapper;
 import com.atguigu.exam.mapper.VideoLikeMapper;
 import com.atguigu.exam.mapper.VideoMapper;
 import com.atguigu.exam.mapper.VideoViewMapper;
 import com.atguigu.exam.service.FileUploadService;
-import com.atguigu.exam.service.VideoService;
 import com.atguigu.exam.utils.IpUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;

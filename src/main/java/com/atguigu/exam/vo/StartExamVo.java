@@ -23,4 +23,5 @@ public class StartExamVo {
             requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "考生姓名不能为空")
     private String studentName; // 考生姓名
-} 
+    private Integer userId;
+}

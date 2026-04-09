@@ -42,7 +42,7 @@ public class KimiAiServiceImpl implements KimiAiService {
     public String buildPrompt(AiGenerateRequestVo request) {
         StringBuilder prompt = new StringBuilder();
 
-        prompt.append("请为我生成").append(request.getCount()).append("道关于【")
+        prompt.append("生成").append(request.getCount()).append("道关于【")
                 .append(request.getTopic()).append("】的题目。\n\n");
 
         prompt.append("要求：\n");

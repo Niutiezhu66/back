@@ -2,11 +2,14 @@ package com.atguigu.exam.controller;
 
 
 import com.atguigu.exam.common.Result;
+import com.atguigu.exam.service.UserService;
 import com.atguigu.exam.vo.LoginRequestVo;
 import com.atguigu.exam.vo.LoginResponseVo;
+import com.atguigu.exam.vo.RegisterRequestVo;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 
@@ -19,19 +22,39 @@ import org.springframework.web.bind.annotation.*;
 @CrossOrigin(origins = "*")  // 允许跨域访问
 @Tag(name = "用户管理", description = "用户相关操作，包括登录认证、权限验证等功能")  // Swagger API分组
 public class UserController {
-    
+
+    @Autowired
+    private UserService userService;
+
+    // 1. 登录接口
+    @PostMapping("/login")
+    public Result login(@RequestBody LoginRequestVo loginVo) {
+        return userService.login(loginVo);
+    }
+
+    // 2. 注册接口
+    @PostMapping("/register")
+    public Result register(@RequestBody RegisterRequestVo registerVo) {
+        return userService.register(registerVo);
+    }
+
+    // 3. 教师查询名下学生列表
+    @GetMapping("/myStudents")
+    public Result getMyStudents(@RequestParam Integer teacherId) {
+        return userService.getMyStudents(teacherId);
+    }
 
     /**
      * 用户登录
      * @param loginRequestVo 登录请求
      * @return 登录结果
      */
-    @PostMapping("/login")  // 处理POST请求
-    @Operation(summary = "用户登录", description = "用户通过用户名和密码进行登录验证，返回用户信息和token")  // API描述
-    public Result<LoginResponseVo> login(@RequestBody LoginRequestVo loginRequestVo) {
-        return Result.success(null);
-    }
-    
+//    @PostMapping("/login")  // 处理POST请求
+//    @Operation(summary = "用户登录", description = "用户通过用户名和密码进行登录验证，返回用户信息和token")  // API描述
+//    public Result<LoginResponseVo> login(@RequestBody LoginRequestVo loginRequestVo) {
+//        return Result.success(null);
+//    }
+//
     /**
      * 检查用户权限
      * @param userId 用户ID

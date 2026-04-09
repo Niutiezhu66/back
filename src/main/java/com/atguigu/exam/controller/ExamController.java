@@ -34,6 +34,10 @@ public class ExamController {
     @PostMapping("/start")  // 处理POST请求
     @Operation(summary = "开始考试", description = "学生开始考试，创建考试记录并返回试卷内容")  // API描述
     public Result<ExamRecord> startExam(@RequestBody StartExamVo startExamVo) {
+        // ✨ 新增：安全校验，确保前端传了用户ID
+        if (startExamVo.getUserId() == null) {
+            return Result.error("获取考生的用户状态失败，请重新登录！");
+        }
         ExamRecord examRecord = examService.saveExam(startExamVo);
         return Result.success(examRecord, "考试开始成功");
     }

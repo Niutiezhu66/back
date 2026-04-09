@@ -64,4 +64,6 @@ public class ExamRecord extends BaseEntity {
     @TableField(exist = false)
     private Paper paper; // 试卷信息
 
+    public void setUserId(Integer userId) {
+    }
 } 

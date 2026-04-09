@@ -57,6 +57,7 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
 
         //2。补全考试记录对象的属性
         examRecord = new ExamRecord();
+        examRecord.setUserId(startExamVo.getUserId());
         examRecord.setStudentName(startExamVo.getStudentName());
         examRecord.setExamId(startExamVo.getPaperId());
         examRecord.setStartTime(LocalDateTime.now());

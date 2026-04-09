@@ -53,4 +53,6 @@ public class User extends BaseEntity {
             example = "ACTIVE", 
             allowableValues = {"ACTIVE", "INACTIVE"})
     private String status;
+
+    private Integer userId;
 } 

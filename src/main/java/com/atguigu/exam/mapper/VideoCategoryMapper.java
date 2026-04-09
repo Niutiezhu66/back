@@ -1,7 +1,6 @@
 package com.atguigu.exam.mapper;
 
 
-import com.atguigu.exam.entity.VideoCategory;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
