@@ -20,6 +20,10 @@ import java.util.List;
 @Schema(description = "考试记录信息")
 public class ExamRecord extends BaseEntity {
 
+    @Schema(description = "考生用户ID",
+            example = "1001")
+    private Long userId; // 用户ID
+
     @Schema(description = "试卷ID，关联的考试试卷", 
             example = "1")
     private Integer examId; // 试卷ID

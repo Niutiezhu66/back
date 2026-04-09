@@ -47,7 +47,8 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
     public ExamRecord saveExam(StartExamVo startExamVo) {
         //1.检查该考生是否存在正在进行的考试
         LambdaQueryWrapper<ExamRecord> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(ExamRecord::getStudentName, startExamVo.getStudentName());
+//        queryWrapper.eq(ExamRecord::getStudentName, startExamVo.getStudentName());
+        queryWrapper.eq(ExamRecord::getUserId, startExamVo.getUserId());
         queryWrapper.eq(ExamRecord::getStatus, "进行中");
         queryWrapper.eq(ExamRecord::getExamId,startExamVo.getPaperId());
         ExamRecord examRecord = getOne(queryWrapper);

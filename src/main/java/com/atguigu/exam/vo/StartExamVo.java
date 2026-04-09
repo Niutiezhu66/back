@@ -23,5 +23,10 @@ public class StartExamVo {
             requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "考生姓名不能为空")
     private String studentName; // 考生姓名
+
+    @Schema(description = "考生ID，用于唯一标识考试用户",
+            example = "1001",
+            requiredMode = Schema.RequiredMode.REQUIRED)
+    @NotNull(message = "考生ID不能为空")
     private Integer userId;
 }
