@@ -10,7 +10,7 @@
     </parent>
 
     <groupId>com.lzx</groupId>
-    <artifactId>guigulianxishi</artifactId>
+    <artifactId>back</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <properties>

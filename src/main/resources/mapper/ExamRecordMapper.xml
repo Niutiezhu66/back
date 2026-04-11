@@ -2,8 +2,8 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.atguigu.exam.mapper.ExamRecordMapper">
-    <select id="getRanking" resultType="com.atguigu.exam.vo.ExamRankingVO">
+<mapper namespace="com.back.exam.mapper.ExamRecordMapper">
+    <select id="getRanking" resultType="com.back.exam.vo.ExamRankingVO">
         select
         er.*,
         pr.`name` paper_name ,
