@@ -41,17 +41,23 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             Sheet sheet = workbook.getSheetAt(0);
             int successCount = 0;
             int skipCount = 0;
+            int bindCount = 0; // 记录绑定的师生对数
 
-            // 假设Excel表头为: 用户名(账号) | 密码 | 真实姓名 | 角色(1老师/2学生) | 学号/工号
+            // 【关键修改】：使用 DataFormatter 替代原来的 getCellValueAsString，完美防止纯数字报错
+            DataFormatter formatter = new DataFormatter();
+
+            // 假设Excel表头为: 用户名(0) | 密码(1) | 真实姓名(2) | 角色(3) | 学号/工号(4) | 教师工号(5)
             for (int i = 1; i <= sheet.getLastRowNum(); i++) {
                 Row row = sheet.getRow(i);
                 if (row == null) continue;
 
-                String username = getCellValueAsString(row.getCell(0));
-                String password = getCellValueAsString(row.getCell(1));
-                String realName = getCellValueAsString(row.getCell(2));
-                String roleStr = getCellValueAsString(row.getCell(3));
-                String userIdStr = getCellValueAsString(row.getCell(4));
+                // 使用 formatter 读取所有列
+                String username = formatter.formatCellValue(row.getCell(0)).trim();
+                String password = formatter.formatCellValue(row.getCell(1)).trim();
+                String realName = formatter.formatCellValue(row.getCell(2)).trim();
+                String roleStr = formatter.formatCellValue(row.getCell(3)).trim();
+                String userIdStr = formatter.formatCellValue(row.getCell(4)).trim();
+                String teacherUserIdStr = formatter.formatCellValue(row.getCell(5)).trim(); // 第6列
 
                 if (username.isEmpty() || password.isEmpty() || userIdStr.isEmpty()) {
                     continue; // 必填字段为空则跳过
@@ -66,21 +72,43 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
                     continue;
                 }
 
-                // 保存用户
+                // 1. 保存用户
                 User user = new User();
                 user.setUsername(username);
                 user.setPassword(password);
                 user.setRealName(realName);
-                user.setRole(roleStr.contains("1") ? "1" : "2"); // 1为老师，2为学生
+                String role = roleStr.contains("1") ? "1" : "2";
+                user.setRole(role); // 1为老师，2为学生
                 user.setUserId(userIdValue);
                 user.setStatus("active");
-                save(user);
+                save(user); // 保存后自动回填主键ID
                 successCount++;
+
+                // 2. 【新增】：如果是学生，且填了教师工号，自动绑定师生关系
+                if ("2".equals(role) && !teacherUserIdStr.isEmpty()) {
+                    try {
+                        Integer teacherUserId = Double.valueOf(teacherUserIdStr).intValue();
+                        LambdaQueryWrapper<User> teacherWrapper = new LambdaQueryWrapper<>();
+                        teacherWrapper.eq(User::getUserId, teacherUserId).eq(User::getRole, "1");
+                        User teacher = getOne(teacherWrapper);
+
+                        if (teacher != null) {
+                            TeacherStudent relation = new TeacherStudent();
+                            relation.setTeacherId(teacher.getId()); // 老师主键
+                            relation.setStudentId(user.getId());    // 学生主键
+                            relation.setCreateTime(LocalDateTime.now());
+                            teacherStudentMapper.insert(relation);
+                            bindCount++;
+                        }
+                    } catch (Exception e) {
+                        System.out.println("第" + i + "行师生绑定失败，教师工号格式错误或不存在：" + e.getMessage());
+                    }
+                }
             }
-            return Result.success("导入完成！成功导入: " + successCount + " 条，跳过重复/无效数据: " + skipCount + " 条。");
+            return Result.success("导入完成！新增: " + successCount + " 人, 绑定师生: " + bindCount + " 对, 跳过重复: " + skipCount + " 条。");
         } catch (Exception e) {
             e.printStackTrace();
-            return Result.error("Excel解析失败，请检查文件格式是否正确。");
+            return Result.error("Excel解析失败，请检查文件格式：" + e.getMessage());
         }
     }
 

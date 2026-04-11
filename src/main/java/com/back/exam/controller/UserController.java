@@ -1,6 +1,5 @@
 package com.back.exam.controller;
 
-
 import com.back.exam.common.Result;
 import com.back.exam.entity.User;
 import com.back.exam.service.UserService;
@@ -9,59 +8,159 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.apache.poi.ss.usermodel.*;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
+import org.apache.poi.ss.usermodel.DataFormatter;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 @RestController  // REST控制器，返回JSON数据
 @RequestMapping("/api/user")  // 用户API路径前缀
 @CrossOrigin(origins = "*")  // 允许跨域访问
-@Tag(name = "用户管理", description = "用户相关操作，包括登录认证、权限验证等功能")  // Swagger API分组
+@Tag(name = "用户管理", description = "用户相关操作，包括登录认证、权限验证、批量导入等功能")  // Swagger API分组
 public class UserController {
 
     @Autowired
     private UserService userService;
 
+    // ================== 修改：下载用户导入Excel模板 ==================
+    @GetMapping("/batch/template")
+    @Operation(summary = "下载用户导入模板", description = "下载用户批量导入的Excel模板文件，包含师生绑定列")
+    public ResponseEntity<byte[]> downloadUserTemplate() throws IOException {
+        // 1. 创建Excel工作簿
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("用户导入模板");
 
-//
-//    // --- 1. 管理员：一键导入师生 ---
-//    @PostMapping("/import")
-//    @Operation(summary = "Excel批量导入师生", description = "管理员上传Excel文件批量注册用户")
-//    public Result<String> importUsers(@RequestParam("file") MultipartFile file) {
-//        return userService.importUsers(file);
-//    }
-//
-//    // --- 2. 教师：根据学号绑定学生 ---
-//    @PostMapping("/teacher/bind")
-//    @Operation(summary = "教师绑定学生", description = "教师输入学生学号(userId)，将学生绑定到自己名下")
-//    public Result<String> bindStudent(
-//            @RequestParam("teacherId") Long teacherId,
-//            @RequestParam("studentUserId") Integer studentUserId) {
-//        return userService.bindStudentByUserId(teacherId, studentUserId);
-//    }
-//
-//    // --- 3. 教师/管理员：解绑学生 ---
-//    @PostMapping("/teacher/unbind")
-//    @Operation(summary = "解除师生绑定", description = "解除指定教师和学生之间的关联关系")
-//    public Result<String> unbindStudent(
-//            @RequestParam("teacherId") Long teacherId,
-//            @RequestParam("studentId") Long studentId) {
-//        return userService.unbindStudent(teacherId, studentId);
-//    }
-//
-//    // --- 4. 管理员：强制绑定师生关系 ---
-//    @PostMapping("/admin/bind")
-//    @Operation(summary = "管理员强制绑定", description = "管理员直接分配学生给指定教师")
-//    public Result<String> adminBindStudent(
-//            @RequestParam("teacherId") Long teacherId,
-//            @RequestParam("studentUserId") Integer studentUserId) {
-//        // 逻辑与教师自主绑定一致，只是操作人是管理员
-//        return userService.bindStudentByUserId(teacherId, studentUserId);
-//    }
-//
+        // 2. 创建表头 (新增第6列：所属教师工号)
+        Row headerRow = sheet.createRow(0);
+        String[] headers = {"用户名(账号)", "密码", "真实姓名", "角色(1老师/2学生)", "学号/工号", "所属教师工号(仅学生选填)"};
+        for (int i = 0; i < headers.length; i++) {
+            headerRow.createCell(i).setCellValue(headers[i]);
+            sheet.autoSizeColumn(i); // 自动调整列宽
+        }
+
+        // 3. 创建一行示例数据 (学生绑定老师的示例)
+        Row exampleRow = sheet.createRow(1);
+        exampleRow.createCell(0).setCellValue("zhangsan");
+        exampleRow.createCell(1).setCellValue("123456");
+        exampleRow.createCell(2).setCellValue("张三");
+        exampleRow.createCell(3).setCellValue("2"); // 2 是学生
+        exampleRow.createCell(4).setCellValue("20230001"); // 学生学号
+        exampleRow.createCell(5).setCellValue("10001");    // 假设 10001 是某位教师的工号
+
+        // 4. 将Excel写入字节输出流
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        workbook.write(out);
+        workbook.close();
+        byte[] bytes = out.toByteArray();
+
+        // 5. 返回 ResponseEntity
+        return ResponseEntity.ok()
+                .header("content-disposition", "attachment; filename=user_template.xlsx")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(bytes);
+    }
+
+    @PostMapping("/batch/preview-excel")
+    @Operation(summary = "预览用户导入Excel", description = "读取上传的Excel文件前几行作为前端预览")
+    public Result<List<Map<String, String>>> previewExcel(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) {
+            return Result.error("上传的Excel文件为空！");
+        }
+        try (InputStream is = file.getInputStream();
+             Workbook workbook = WorkbookFactory.create(is)) {
+
+            Sheet sheet = workbook.getSheetAt(0);
+            List<Map<String, String>> previewList = new ArrayList<>();
+
+            // 预览最多展示前10行数据
+            int maxRows = Math.min(sheet.getLastRowNum(), 10);
+
+            // 假设表头在第0行，数据从第1行开始
+            for (int i = 1; i <= maxRows; i++) {
+                Row row = sheet.getRow(i);
+                if (row == null) continue;
+
+                // 将每行数据组装成 Map
+                Map<String, String> rowData = new LinkedHashMap<>();
+                rowData.put("username", getCellValue(row.getCell(0)));
+                rowData.put("password", getCellValue(row.getCell(1)));
+                rowData.put("realName", getCellValue(row.getCell(2)));
+                rowData.put("role", getCellValue(row.getCell(3)));
+                rowData.put("userId", getCellValue(row.getCell(4)));
+                rowData.put("teacherId", getCellValue(row.getCell(5))); // 第6列所属教师
+
+                // 如果整行都没数据则跳过
+                if (!rowData.get("username").isEmpty() || !rowData.get("userId").isEmpty()) {
+                    previewList.add(rowData);
+                }
+            }
+            return Result.success(previewList);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("Excel解析失败，请检查文件格式是否正确。");
+        }
+    }
+
+    // 辅助解析单元格格式的方法
+    private String getCellValue(Cell cell) {
+        if (cell == null) {
+            return "";
+        }
+        // 使用 DataFormatter 可以完美读取数字、文本而不报错
+        DataFormatter formatter = new DataFormatter();
+        String val = formatter.formatCellValue(cell);
+
+        return val != null ? val.trim() : "";
+    }
+
+
+
+    // ================== 解除注释：管理员一键导入师生 ==================
+    @PostMapping("/batch/import-users")
+    @Operation(summary = "Excel批量导入师生", description = "管理员上传Excel文件批量注册用户")
+    public Result<String> importUsers(@RequestParam("file") MultipartFile file) {
+        return userService.importUsers(file);
+    }
+
+    // --- 教师：根据学号绑定学生 ---
+    @PostMapping("/teacher/bind")
+    @Operation(summary = "教师绑定学生", description = "教师输入学生学号(userId)，将学生绑定到自己名下")
+    public Result<String> bindStudent(
+            @RequestParam("teacherId") Long teacherId,
+            @RequestParam("studentUserId") Integer studentUserId) {
+        return userService.bindStudentByUserId(teacherId, studentUserId);
+    }
+
+    // --- 教师/管理员：解绑学生 ---
+    @PostMapping("/teacher/unbind")
+    @Operation(summary = "解除师生绑定", description = "解除指定教师和学生之间的关联关系")
+    public Result<String> unbindStudent(
+            @RequestParam("teacherId") Long teacherId,
+            @RequestParam("studentId") Long studentId) {
+        return userService.unbindStudent(teacherId, studentId);
+    }
+
+    // --- 管理员：强制绑定师生关系 ---
+    @PostMapping("/admin/bind")
+    @Operation(summary = "管理员强制绑定", description = "管理员直接分配学生给指定教师")
+    public Result<String> adminBindStudent(
+            @RequestParam("teacherId") Long teacherId,
+            @RequestParam("studentUserId") Integer studentUserId) {
+        // 逻辑与教师自主绑定一致，只是操作人是管理员
+        return userService.bindStudentByUserId(teacherId, studentUserId);
+    }
 
     // 1. 登录接口
     @PostMapping("/login")
@@ -70,10 +169,6 @@ public class UserController {
     }
 
     // 2. 注册接口
-//    @PostMapping("/register")
-//    public Result register(@RequestBody RegisterRequestVo registerVo) {
-//        return userService.register(registerVo);
-//    }
     @PostMapping("/register")
     @Operation(summary = "用户注册", description = "注册新用户，包含用户名、学号查重和非空校验")
     public Result<String> register(@RequestBody Map<String, Object> registerData) {
@@ -98,7 +193,6 @@ public class UserController {
             return Result.error("学号/工号不能为空！");
         }
 
-        // 修改点：这里改为 Integer
         Integer userIdValue;
         try {
             // 将字符串转换为 Integer 类型
@@ -141,19 +235,10 @@ public class UserController {
         return userService.getMyStudents(teacherId);
     }
 
-
-//    @PostMapping("/login")  // 处理POST请求
-//    @Operation(summary = "用户登录", description = "用户通过用户名和密码进行登录验证，返回用户信息和token")  // API描述
-//    public Result<LoginResponseVo> login(@RequestBody LoginRequestVo loginRequestVo) {
-//        return Result.success(null);
-//    }
-//
-
-    @GetMapping("/check-admin/{userId}")  // 处理GET请求
-    @Operation(summary = "检查管理员权限", description = "验证指定用户是否具有管理员权限")  // API描述
+    @GetMapping("/check-admin/{userId}")
+    @Operation(summary = "检查管理员权限", description = "验证指定用户是否具有管理员权限")
     public Result<Boolean> checkAdmin(
             @Parameter(description = "用户ID") @PathVariable Long userId) {
-
         return Result.success(true);
     }
-} 
+}
