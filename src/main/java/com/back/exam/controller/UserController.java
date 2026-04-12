@@ -24,6 +24,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.back.exam.vo.TeacherStudentVO;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 @RestController  // REST控制器，返回JSON数据
 @RequestMapping("/api/user")  // 用户API路径前缀
@@ -33,6 +35,75 @@ public class UserController {
 
     @Autowired
     private UserService userService;
+
+    // ================== 管理员：用户增删改查 ==================
+
+    @GetMapping("/page")
+    @Operation(summary = "分页查询用户", description = "按条件分页获取所有用户列表")
+    public Result<Page<User>> getUserPage(
+            @RequestParam(defaultValue = "1") Integer current,
+            @RequestParam(defaultValue = "10") Integer size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String role) {
+
+        Page<User> page = new Page<>(current, size);
+        LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
+
+        // 支持按用户名、真实姓名、学号/工号模糊搜索
+        if (StringUtils.hasText(keyword)) {
+            wrapper.and(w -> w.like(User::getUsername, keyword)
+                    .or()
+                    .like(User::getRealName, keyword)
+                    .or()
+                    .like(User::getUserId, keyword));
+        }
+        // 按角色过滤
+        if (StringUtils.hasText(role)) {
+            wrapper.eq(User::getRole, role);
+        }
+
+        wrapper.orderByDesc(User::getCreateTime);
+        return Result.success(userService.page(page, wrapper));
+    }
+
+    @PostMapping("/add")
+    @Operation(summary = "新增用户(后台)")
+    public Result<String> addUser(@RequestBody User user) {
+        // 查重逻辑
+        if(userService.count(new LambdaQueryWrapper<User>().eq(User::getUsername, user.getUsername())) > 0){
+            return Result.error("用户名已存在！");
+        }
+        if(user.getUserId() != null && userService.count(new LambdaQueryWrapper<User>().eq(User::getUserId, user.getUserId())) > 0){
+            return Result.error("学号/工号已存在！");
+        }
+
+        if (!StringUtils.hasText(user.getStatus())) {
+            user.setStatus("active");
+        }
+        userService.save(user);
+        return Result.success("新增成功");
+    }
+
+    @PutMapping("/update")
+    @Operation(summary = "修改用户")
+    public Result<String> updateUser(@RequestBody User user) {
+        // 这里可以加上忽略密码修改的逻辑，或者允许管理员直接重置密码
+        userService.updateById(user);
+        return Result.success("修改成功");
+    }
+
+    // ================== 管理员：删除用户 ==================
+    @DeleteMapping("/delete/{id}")
+    @Operation(summary = "删除用户")
+    public Result<String> deleteUser(@PathVariable Long id) {
+        // 【修改】：使用带有关联清理的自定义方法
+        boolean success = userService.deleteUserAndRelations(id);
+        if (success) {
+            return Result.success("删除成功，并已解绑该用户的所有师生关系！");
+        } else {
+            return Result.error("删除失败");
+        }
+    }
 
     // ================== 修改：下载用户导入Excel模板 ==================
     @GetMapping("/batch/template")
@@ -240,5 +311,12 @@ public class UserController {
     public Result<Boolean> checkAdmin(
             @Parameter(description = "用户ID") @PathVariable Long userId) {
         return Result.success(true);
+    }
+
+
+    @GetMapping("/admin/relations")
+    @Operation(summary = "获取所有师生绑定关系", description = "管理员查看全局师生绑定关系")
+    public Result<List<TeacherStudentVO>> getAllRelations() {
+        return userService.getAllTeacherStudentRelations();
     }
 }

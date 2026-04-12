@@ -13,8 +13,8 @@ import java.time.LocalDateTime;
 @Schema(description = "师生关联关系")
 public class TeacherStudent {
 
-    @TableId(type = IdType.AUTO)
-    private Long id;
+//    @TableId(type = IdType.AUTO)
+//    private Long id;
 
     @Schema(description = "教师的数据库主键ID")
     private Long teacherId;

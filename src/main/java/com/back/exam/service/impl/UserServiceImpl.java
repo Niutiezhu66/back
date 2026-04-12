@@ -22,7 +22,7 @@ import java.io.InputStream;
 import java.time.LocalDateTime;
 
 import java.util.List;
-
+import com.back.exam.vo.TeacherStudentVO;
 @Service
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
 
@@ -94,8 +94,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
                         if (teacher != null) {
                             TeacherStudent relation = new TeacherStudent();
-                            relation.setTeacherId(teacher.getId()); // 老师主键
-                            relation.setStudentId(user.getId());    // 学生主键
+                            relation.setTeacherId(Long.valueOf(teacher.getUserId()));
+                            relation.setStudentId(Long.valueOf(user.getUserId()));
                             relation.setCreateTime(LocalDateTime.now());
                             teacherStudentMapper.insert(relation);
                             bindCount++;
@@ -113,6 +113,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
+    public Result<List<TeacherStudentVO>> getAllTeacherStudentRelations() {
+        List<TeacherStudentVO> list = teacherStudentMapper.selectAllRelations();
+        return Result.success(list);
+    }
+
+    @Override
     public Result<String> bindStudentByUserId(Long teacherId, Integer studentUserId) {
         // 1. 根据前端传来的学号，找到对应的学生记录
         LambdaQueryWrapper<User> userWrapper = new LambdaQueryWrapper<>();
@@ -126,7 +132,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 2. 检查是否已经绑定过
         LambdaQueryWrapper<TeacherStudent> tsWrapper = new LambdaQueryWrapper<>();
         tsWrapper.eq(TeacherStudent::getTeacherId, teacherId)
-                .eq(TeacherStudent::getStudentId, student.getId());
+                .eq(TeacherStudent::getStudentId, Long.valueOf(studentUserId));
         if (teacherStudentMapper.selectCount(tsWrapper) > 0) {
             return Result.error("该学生已在您的名下，无需重复绑定！");
         }
@@ -134,7 +140,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 3. 建立绑定关系
         TeacherStudent relation = new TeacherStudent();
         relation.setTeacherId(teacherId);
-        relation.setStudentId(student.getId());
+        relation.setStudentId(Long.valueOf(studentUserId));
         relation.setCreateTime(LocalDateTime.now());
         teacherStudentMapper.insert(relation);
 
@@ -169,23 +175,29 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return Result.error("用户名或密码不能为空");
         }
 
-        // 2. 根据用户名和密码查询数据库
+        // 2. 正常查询 (此时会被 MyBatis-Plus 自动拼上 AND is_deleted=0)
         QueryWrapper<User> wrapper = new QueryWrapper<>();
-        // 注意：实际开发中强烈建议密码进行MD5或其他单向加密比对，此处为了演示简单直接用明文比对
         wrapper.eq("username", loginVo.getUsername())
                 .eq("password", loginVo.getPassword());
 
         User user = this.getOne(wrapper);
 
-        // 3. 判断是否登录成功
+        // 3. 如果查不到人
         if (user == null) {
+            // 【关键修改】：去查一下是不是因为账号被删除了
+            Integer isDeleted = baseMapper.checkUserDeletedStatus(loginVo.getUsername());
+            if (isDeleted != null && isDeleted == 1) {
+                return Result.error("该账号已被注销或删除，无法登录，请联系管理员！");
+            }
             return Result.error("用户名或密码错误");
         }
 
-        // 登录成功，将密码置空后再返回给前端，防止密码泄露
-        user.setPassword(null);
+        if ("disabled".equals(user.getStatus())) {
+            return Result.error("账号已被禁用，请联系管理员");
+        }
 
-        // 可选：如果项目中集成了JWT，这里应该生成Token并与user信息一起返回
+        // 登录成功，将密码置空后再返回给前端
+        user.setPassword(null);
         return Result.success(user);
     }
 
@@ -241,5 +253,34 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
 
         return Result.success(students);
+    }
+
+
+    @Override
+    @Transactional(rollbackFor = Exception.class) // 保证事务，要么都成功，要么都失败
+    public boolean deleteUserAndRelations(Long id) {
+        // 1. 先查出该用户信息，拿到业务学号/工号
+        User user = this.getById(id);
+        if (user == null) {
+            return false;
+        }
+        Integer businessUserId = user.getUserId();
+
+        // 2. 逻辑删除 users 表中的用户
+        boolean removed = this.removeById(id);
+
+        // 3. 如果删除成功，则去 teacher_student 表中物理删除关联关系
+        if (removed && businessUserId != null) {
+            Long targetId = Long.valueOf(businessUserId);
+            LambdaQueryWrapper<TeacherStudent> tsWrapper = new LambdaQueryWrapper<>();
+            // 只要 teacher_id 或 student_id 是这个人，统统删掉
+            tsWrapper.eq(TeacherStudent::getTeacherId, targetId)
+                    .or()
+                    .eq(TeacherStudent::getStudentId, targetId);
+
+            teacherStudentMapper.delete(tsWrapper);
+        }
+
+        return removed;
     }
 }
