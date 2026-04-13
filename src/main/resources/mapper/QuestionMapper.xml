@@ -46,6 +46,10 @@
             <result column="qas_update_time" property="updateTime" />
             <result column="question_id" property="questionId" />
         </association>
+        <association property="category" javaType="com.back.exam.entity.Category">
+            <id column="category_id" property="id" />
+            <result column="category_name" property="name" />
+        </association>
         <collection property="choices" ofType="com.back.exam.entity.QuestionChoice" notNullColumn="qcs_id">
             <id column="qcs_id" property="id" />
             <result column="qcs_question_id" property="questionId" />

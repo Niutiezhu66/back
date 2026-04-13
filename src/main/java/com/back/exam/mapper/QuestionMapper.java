@@ -21,4 +21,11 @@ public interface QuestionMapper extends BaseMapper<Question> {
     IPage<Question> selectQuestionPage(IPage<Question> page, @Param("queryVo") QuestionQueryVo queryVo);
 
     List<Question> selectQuestionListByPaperId(Integer id);
+
+    @Select("SELECT q.*, c.name as category_name " +
+            "FROM questions q " +
+            "LEFT JOIN categories c ON q.category_id = c.id " +
+            "WHERE q.id = #{id}")
+    Question selectQuestionWithCategory(Long id);
+
 }

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Kimi AI服务实现类
@@ -167,9 +168,17 @@ public class KimiAiServiceImpl implements KimiAiService {
                 JSONObject resultJsonObject = JSONObject.parseObject(result);
 
                 //错误结果：https://platform.moonshot.cn/docs/api/chat#错误说明
+//                if (resultJsonObject != null && resultJsonObject.containsKey("error")) {
+//                    throw new RuntimeException("访问错误了，错误信息为:" + resultJsonObject.getJSONObject("error").getString("message"));
+//                }
                 if (resultJsonObject != null && resultJsonObject.containsKey("error")) {
-                    throw new RuntimeException("访问错误了，错误信息为:" + resultJsonObject.getJSONObject("error").getString("message"));
+                    String msg = resultJsonObject.getJSONObject("error").getString("message");
+                    if (msg != null && msg.contains("429")) {
+                        throw new RuntimeException("AI 接口被限流，请稍后再试");
+                    }
+                    throw new RuntimeException("访问错误了，错误信息为:" + msg);
                 }
+
                 //正确结果，格式见kimi官网
                 String content = resultJsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
 
@@ -181,7 +190,7 @@ public class KimiAiServiceImpl implements KimiAiService {
 
             }catch (Exception e) {
                 e.printStackTrace();
-                Thread.sleep(500);//失败后休眠0.5秒重试
+                Thread.sleep(1000);
             }
         }
         throw new RuntimeException("已经重试%s次无返回结果，调用失败".formatted(maxTry));
@@ -256,5 +265,123 @@ public class KimiAiServiceImpl implements KimiAiService {
         typeMap.put("JUDGE", "判断题");
         typeMap.put("TEXT", "简答题");
         return typeMap.getOrDefault(type, "未知题型");
+    }
+
+    @Override
+    public String buildDetailedSummaryPrompt(Integer totalScore, Integer maxScore,
+                                              Integer questionCount, Integer correctCount,
+                                              List<ExamQuestionDetail> examDetails) {
+        double percentage = (double) totalScore / maxScore * 100;
+
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一名资深的教育专家，请为学生的考试表现提供专业的总评和学习建议。\n\n");
+
+        // 1. 总体成绩概况
+        prompt.append("【考试成绩概况】\n");
+        prompt.append("总得分：").append(totalScore).append("/").append(maxScore).append("分\n");
+        prompt.append("得分率：").append(String.format("%.1f", percentage)).append("%\n");
+        prompt.append("题目总数：").append(questionCount).append("道\n");
+        prompt.append("答对题数：").append(correctCount).append("道\n\n");
+
+        // 2. 按分类统计正确率
+//        Map<String, List<ExamQuestionDetail>> categoryMap = examDetails.stream()
+//                .collect(Collectors.groupingBy(ExamQuestionDetail::getCategoryName));
+
+        Map<String, List<ExamQuestionDetail>> categoryMap = examDetails.stream()
+                .collect(Collectors.groupingBy(d ->
+                        Optional.ofNullable(d.getCategoryName()).orElse("未分类")
+                ));
+
+        prompt.append("【各知识点分类掌握情况】\n");
+        for (Map.Entry<String, List<ExamQuestionDetail>> entry : categoryMap.entrySet()) {
+            String category = entry.getKey();
+            List<ExamQuestionDetail> questions = entry.getValue();
+            int categoryTotal = questions.size();
+            int categoryCorrect = (int) questions.stream()
+                    .filter(q -> q.getIsCorrect() != null && q.getIsCorrect() == 1).count();
+            int categoryScore = questions.stream().mapToInt(ExamQuestionDetail::getObtainedScore).sum();
+            int categoryMaxScore = questions.stream().mapToInt(ExamQuestionDetail::getScore).sum();
+
+            prompt.append("- ").append(category).append(": ")
+                  .append(categoryCorrect).append("/").append(categoryTotal).append("题正确, ")
+                  .append("得分").append(categoryScore).append("/").append(categoryMaxScore).append("分\n");
+        }
+        prompt.append("\n");
+
+        // 3. 详细答题情况
+        prompt.append("【详细答题情况】\n");
+        for (ExamQuestionDetail detail : examDetails) {
+            prompt.append("第").append(detail.getNumber()).append("题 ");
+            prompt.append("[").append(getTypeText(detail.getType())).append("] ");
+            prompt.append("[").append(detail.getCategoryName() != null ? detail.getCategoryName() : "未分类").append("] ");
+            prompt.append("[").append(getDifficultyText(detail.getDifficulty())).append("]\n");
+
+            // 题目内容（缩略显示，避免太长）
+            String title = detail.getTitle();
+            if (title != null && title.length() > 50) {
+                title = title.substring(0, 50) + "...";
+            }
+            prompt.append("题目：").append(title).append("\n");
+
+            // 答题情况
+            String status;
+            if (detail.getIsCorrect() == null) {
+                status = "✗ 错误";
+            } else {
+                status = switch (detail.getIsCorrect()) {
+                    case 1 -> "✓ 正确";
+                    case 2 -> "○ 部分正确";
+                    default -> "✗ 错误";
+                };
+            }
+            prompt.append("状态：").append(status)
+                  .append(" (").append(detail.getObtainedScore() != null ? detail.getObtainedScore() : 0)
+                  .append("/").append(detail.getScore() != null ? detail.getScore() : 0).append("分)\n");
+            prompt.append("学生答案：").append(detail.getUserAnswer() != null ? detail.getUserAnswer() : "未作答").append("\n");
+            prompt.append("正确答案：").append(detail.getCorrectAnswer() != null ? detail.getCorrectAnswer() : "").append("\n");
+
+            // AI批改意见（如果有）
+            if (detail.getAiCorrection() != null && !detail.getAiCorrection().isEmpty()) {
+                prompt.append("AI评价：").append(detail.getAiCorrection()).append("\n");
+            }
+            prompt.append("\n");
+        }
+
+        // 4. 总评要求
+        prompt.append("【总评要求】\n");
+        prompt.append("请根据以上详细答题情况，提供以下内容：\n");
+        prompt.append("1. 总体表现评价（100字左右）：分析学生的整体掌握情况\n");
+        prompt.append("2. 优势知识点：指出掌握较好的分类/题型\n");
+        prompt.append("3. 薄弱环节：指出需要加强的分类/题型，具体到知识点\n");
+        prompt.append("4. 学习建议：针对薄弱点给出具体的学习建议\n");
+        prompt.append("5. 鼓励话语：给予积极的鼓励和激励\n\n");
+
+        prompt.append("请直接返回总评内容，无需特殊格式。");
+
+        return prompt.toString();
+    }
+
+    /**
+     * 获取题型文本
+     */
+    private String getTypeText(String type) {
+        return switch (type) {
+            case "CHOICE" -> "选择题";
+            case "JUDGE" -> "判断题";
+            case "TEXT" -> "简答题";
+            default -> "未知题型";
+        };
+    }
+
+    /**
+     * 获取难度文本
+     */
+    private String getDifficultyText(String difficulty) {
+        return switch (difficulty) {
+            case "EASY" -> "简单";
+            case "MEDIUM" -> "中等";
+            case "HARD" -> "困难";
+            default -> "中等";
+        };
     }
 }

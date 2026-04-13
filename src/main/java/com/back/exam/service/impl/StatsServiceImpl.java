@@ -3,7 +3,9 @@ package com.back.exam.service.impl;
 import com.back.exam.entity.ExamRecord;
 import com.back.exam.mapper.*;
 import com.back.exam.mapper.*;
+import com.back.exam.service.KimiAiService;
 import com.back.exam.service.StatsService;
+import com.back.exam.vo.DiagnosisResultVo;
 import com.back.exam.vo.StatsVo;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.*;
 
 /**
  * 统计数据服务实现类
@@ -110,4 +113,113 @@ public class StatsServiceImpl implements StatsService {
         log.info("系统统计数据获取完成: {}", stats);
         return stats;
     }
+
+
+    @Autowired
+    private AnswerRecordMapper answerRecordMapper;
+
+    @Autowired
+    private KimiAiService kimiAiService;
+
+    @Override
+    public DiagnosisResultVo generateAIDiagnosis(Long userId) throws InterruptedException {
+        DiagnosisResultVo result = new DiagnosisResultVo();
+
+        // 1. 获取雷达图分类掌握数据
+        List<Map<String, Object>> masteryList = answerRecordMapper.getStudentCategoryMastery(userId);
+
+        List<DiagnosisResultVo.CategoryScore> radarData = new ArrayList<>();
+        List<String> strongPoints = new ArrayList<>();
+        List<String> weakPoints = new ArrayList<>();
+        double totalPercentage = 0.0;
+        int validCategories = 0;
+
+        StringBuilder aiDataPrompt = new StringBuilder();
+        aiDataPrompt.append("【各分类掌握率数据】\n");
+
+        for (Map<String, Object> map : masteryList) {
+            String categoryName = map.get("categoryName") != null ? map.get("categoryName").toString() : "未分类";
+            double obtained = Double.parseDouble(map.get("obtainedScore").toString());
+            double total = Double.parseDouble(map.get("totalScore").toString());
+
+            // 计算掌握度百分比 (0-100)
+            int percentage = 0;
+            if (total > 0) {
+                percentage = (int) ((obtained / total) * 100);
+            }
+
+            DiagnosisResultVo.CategoryScore cs = new DiagnosisResultVo.CategoryScore();
+            cs.setName(categoryName);
+            cs.setScore(percentage);
+            radarData.add(cs);
+
+            totalPercentage += percentage;
+            validCategories++;
+
+            aiDataPrompt.append("- ").append(categoryName).append("：").append(percentage).append("%\n");
+
+            if (percentage >= 80) strongPoints.add(categoryName);
+            else if (percentage < 60) weakPoints.add(categoryName);
+        }
+
+        // 2. 获取近期盲区（错题）
+        List<Map<String, Object>> wrongList = answerRecordMapper.getRecentWrongQuestions(userId);
+        List<DiagnosisResultVo.BlindSpot> blindSpots = new ArrayList<>();
+
+        aiDataPrompt.append("\n【近期典型错题记录】\n");
+        int index = 1;
+        for (Map<String, Object> map : wrongList) {
+            String cat = map.get("categoryName") != null ? map.get("categoryName").toString() : "通用";
+            String title = map.get("questionTitle").toString();
+            String uAnswer = map.get("userAnswer") != null ? map.get("userAnswer").toString() : "（未作答）";
+
+            DiagnosisResultVo.BlindSpot bs = new DiagnosisResultVo.BlindSpot();
+            bs.setTitle("薄弱知识点：" + cat);
+            bs.setDescription(title);
+            bs.setErrorExample(uAnswer);
+            blindSpots.add(bs);
+
+            aiDataPrompt.append(index++).append(". 属于[").append(cat).append("]的题目：").append(title).append("\n");
+            aiDataPrompt.append("   该生错误作答：").append(uAnswer).append("\n");
+        }
+
+        // 处理没有考试数据的情况
+        if (validCategories == 0) {
+            result.setHealthScore(0);
+            result.setAiSuggestion("暂无足够的考试数据供 AI 分析，请先参加几次考试后再来诊断吧！");
+            return result;
+        }
+
+        // 3. 构建结果对象
+        result.setHealthScore((int) (totalPercentage / validCategories));
+        result.setRadarData(radarData);
+        result.setStrongPoints(strongPoints.isEmpty() ? List.of("暂无明显优势") : strongPoints);
+        result.setWeakPoints(weakPoints.isEmpty() ? List.of("基础较均衡") : weakPoints);
+        result.setBlindSpots(blindSpots);
+
+        // 4. 调用 Kimi AI 生成提升规划
+        String prompt = "你是一位资深的AI学习导师。以下是一名学生真实的学习数据：\n\n"
+                + aiDataPrompt.toString()
+                + "\n\n请直接输出一段 Markdown 格式的专属学习提升规划。要求：\n"
+                + "1. 语气亲切、有鼓励性。\n"
+                + "2. 基于提供的【各分类掌握率数据】，简评其知识结构。\n"
+                + "3. 结合提供的【近期典型错题记录】，指出其具体的认知盲区。\n"
+                + "4. 给出切实可行、分步骤的复习建议。";
+
+        String aiSuggestion = "### 💡 AI 导师提示\n\n当前 AI 咨询人数过多（触发了 API 接口限流），暂时无法生成长篇学习建议文本。\n\n**不过别担心！** 系统已为您精准计算出了上方的**【真实掌握率雷达图】**以及**【核心错题盲区】**。请根据上方的雷达图短板和列出的错题进行针对性复习。稍后您可以点击“重新生成”按钮再次尝试！";
+        try {
+            // 尝试调用大模型
+            String response = kimiAiService.callKimiAI(prompt);
+            if (response != null && !response.isEmpty()) {
+                aiSuggestion = response;
+            }
+        } catch (Exception e) {
+            log.error("AI生成学情诊断时触发限制或网络异常 (不影响其他数据展示): ", e);
+        }
+
+        result.setAiSuggestion(aiSuggestion);
+
+        return result;
+    }
+
 } 

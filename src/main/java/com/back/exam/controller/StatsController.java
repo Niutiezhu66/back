@@ -3,14 +3,12 @@ package com.back.exam.controller;
 
 import com.back.exam.common.Result;
 import com.back.exam.service.StatsService;
+import com.back.exam.vo.DiagnosisResultVo;
 import com.back.exam.vo.StatsVo;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 
 @RestController
@@ -40,6 +38,17 @@ public class StatsController {
             return Result.success("数据库连接正常，统计数据：" + stats.toString());
         } catch (Exception e) {
             return Result.error("数据库连接测试异常：" + e.getMessage());
+        }
+    }
+
+    @GetMapping("/diagnosis/{userId}")
+    public Result<DiagnosisResultVo> getAIDiagnosis(@PathVariable("userId") Long userId) {
+        try {
+            DiagnosisResultVo result = statsService.generateAIDiagnosis(userId);
+            return Result.success(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("AI 诊断生成失败：" + e.getMessage());
         }
     }
 } 

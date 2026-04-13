@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -127,10 +128,17 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
     public void submitExam(Integer examRecordId, List<SubmitAnswerVo> answers) throws InterruptedException {
         //1.中间表保存问题
         if (!ObjectUtils.isEmpty(answers)) {
+            // 【关键修复 1】：先删除当前这份考卷之前的答题记录，防止多次保存产生大量重复脏数据！
+            LambdaQueryWrapper<AnswerRecord> deleteWrapper = new LambdaQueryWrapper<>();
+            deleteWrapper.eq(AnswerRecord::getExamRecordId, examRecordId);
+            answerRecordService.remove(deleteWrapper);
+
+            // 然后再全量插入最新的答题记录
             List<AnswerRecord> answerRecordList = answers.stream().map(vo -> new AnswerRecord(examRecordId, vo.getQuestionId(), vo.getUserAnswer()))
                     .collect(Collectors.toList());
             answerRecordService.saveBatch(answerRecordList);
         }
+
         //2. 暂时修改下考试记录状态（状态 -》 已完成 || 结束时间 - 设置）
         ExamRecord examRecord = getById(examRecordId);
         examRecord.setEndTime(LocalDateTime.now());
@@ -143,9 +151,6 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
 
     @Override
     public ExamRecord gradeExam(Integer examRecordId) throws InterruptedException {
-        // [判卷逻辑与原代码保持一致，省略部分重复的判卷内部逻辑以精简...]
-        // [此处保持您原有的 gradeExam 代码逻辑完全不变即可]
-        // ...
 
         ExamRecord examRecord = getExamRecordDetail(examRecordId);
         Paper paper = examRecord.getPaper();
@@ -167,7 +172,16 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
         int correctNumber = 0 ;
         int totalScore = 0;
 
-        Map<Long, Question> questionMap = paper.getQuestions().stream().collect(Collectors.toMap(Question::getId, q -> q));
+//        Map<Long, Question> questionMap = paper.getQuestions().stream().collect(Collectors.toMap(Question::getId, q -> q));
+
+        // 【关键修复 2】：过滤掉 null 数据，并防止重复的题目 ID 导致系统崩溃
+        Map<Long, Question> questionMap = paper.getQuestions().stream()
+                .filter(q -> q != null && q.getId() != null) // 过滤掉无效的脏数据
+                .collect(Collectors.toMap(
+                        Question::getId,
+                        q -> q,
+                        (existing, replacement) -> existing // 如果有重复的题目ID，保留第一个，忽略后面的
+                ));
 
         for (AnswerRecord answerRecord : answerRecords) {
             try {
@@ -217,8 +231,58 @@ public class ExamServiceImpl extends ServiceImpl<ExamRecordMapper, ExamRecord> i
         }
         answerRecordService.updateBatchById(answerRecords);
 
-        String summaryPrompt = kimiAiService.buildSummaryPrompt(totalScore, paper.getTotalScore().intValue(), paper.getQuestionCount(), correctNumber);
-        String summary = kimiAiService.callKimiAI(summaryPrompt);
+        // ========== 构建详细答题数据并生成AI总评 ==========
+
+        // 1. 准备详细答题数据
+        List<KimiAiService.ExamQuestionDetail> examDetails = new ArrayList<>();
+
+        for (int i = 0; i < answerRecords.size(); i++) {
+            AnswerRecord answerRecord = answerRecords.get(i);
+            Question question = questionMap.get(answerRecord.getQuestionId().longValue());
+
+            if (question == null) continue;
+
+            KimiAiService.ExamQuestionDetail detail = new KimiAiService.ExamQuestionDetail();
+            detail.setNumber(i + 1);  // 题号从1开始
+            detail.setTitle(question.getTitle());
+            detail.setType(question.getType());
+            detail.setCategoryName(question.getCategory() != null ?
+                                   question.getCategory().getName() : "未分类");
+            detail.setDifficulty(question.getDifficulty());
+            detail.setScore(question.getPaperScore() != null ?
+                            question.getPaperScore().intValue() : 0);
+            detail.setUserAnswer(answerRecord.getUserAnswer());
+            detail.setCorrectAnswer(question.getAnswer() != null ?
+                                    question.getAnswer().getAnswer() : "");
+            detail.setIsCorrect(answerRecord.getIsCorrect());
+            detail.setObtainedScore(answerRecord.getScore());
+            detail.setAiCorrection(answerRecord.getAiCorrection());
+
+            examDetails.add(detail);
+        }
+
+        // 2. 调用新的详细总评方法
+        String summaryPrompt = kimiAiService.buildDetailedSummaryPrompt(
+                totalScore,
+                paper.getTotalScore().intValue(),
+                paper.getQuestionCount(),
+                correctNumber,
+                examDetails
+        );
+
+        // ================== 核心修复位置 ==================
+        // 给大模型调用穿上防弹衣，防止 429 限流导致交卷彻底失败
+        String summary = "【系统提示】：当前 AI 访问人数过多（API限流），本次考试未能生成 AI 综合评价，但不影响您的客观题成绩与交卷。";
+        try {
+            // 如果 API 抽风或限流，这里会抛出异常
+            summary = kimiAiService.callKimiAI(summaryPrompt);
+        } catch (Exception e) {
+            // 异常被拦截，记录日志，但程序继续往下走，保证交卷成功！
+            log.error("调用 Kimi AI 生成试卷总评时发生异常（降级处理，保证正常交卷）: ", e);
+        }
+        // ==================================================
+
+        // 3. 无论 AI 成功还是失败，下面这三行必须被安全执行，试卷才能成功提交！
         examRecord.setScore(totalScore);
         examRecord.setAnswers(summary);
         examRecord.setStatus("已批阅");

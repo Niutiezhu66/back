@@ -43,8 +43,8 @@ minio:
 kimi:
   api:
     baseUrl: https://api.moonshot.cn/v1/chat/completions
-#    apiKey: sk-Sj55f2ol9zwINcKOIIa5cmyxs9UEiBSsqLp4wxlDjOp143er
-    apiKey: sk-ZY4iVYEjYXKArX0Y11EG2uOJIJ5NtjkJBHCQkxzHY3RNNNN0
+    apiKey: sk-Sj55f2ol9zwINcKOIIa5cmyxs9UEiBSsqLp4wxlDjOp143er
+#    apiKey: sk-ZY4iVYEjYXKArX0Y11EG2uOJIJ5NtjkJBHCQkxzHY3RNNNN0
     model: moonshot-v1-32k #模型
     temperature: 0.3 #温度
     maxTokens: 4096
