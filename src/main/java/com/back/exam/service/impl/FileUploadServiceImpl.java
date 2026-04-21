@@ -11,9 +11,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.UUID;
 
@@ -26,9 +29,6 @@ public class FileUploadServiceImpl implements FileUploadService {
 
     @Value("${minio.bucket}")
     private String bucket;
-
-    @Value("${minio.endpoint}")
-    private String endpoint;
 
     @Override
     public String uploadFile(String folder, MultipartFile file) {
@@ -62,22 +62,21 @@ public class FileUploadServiceImpl implements FileUploadService {
 
 
             String date = new SimpleDateFormat("yyyyMMdd").format(new Date());
-            // 生成唯一文件名(文件夹名/日期/UUID-初始文件名)
-            String fileName = folder+"/"+date+"/"+ UUID.randomUUID().toString().replaceAll("-","") + "-" + file.getOriginalFilename();
+            String objectName = buildObjectName(folder, date, file.getOriginalFilename());
             // 获取文件流
             InputStream fileInputStream = file.getInputStream();
             // 上传文件
             minioClient.putObject(
                     PutObjectArgs.builder()
                             .bucket(bucket) //传到哪个桶
-                            .object(fileName) //folder+"/" 会自己创建对应文件夹
+                            .object(objectName) //folder+"/" 会自己创建对应文件夹
                             .stream(fileInputStream, file.getSize(), -1) //输入流
                             .contentType(file.getContentType()) //文件类型
                             .build()
             );
 
-            // 返回可访问的 URL
-            return endpoint + "/" + bucket + "/" + fileName;
+            // 返回给前端浏览器可直接访问的 URL
+            return buildPublicUrl(objectName);
         } catch (ServerException | XmlParserException | InvalidResponseException | InvalidKeyException |
                  NoSuchAlgorithmException | InsufficientDataException | ErrorResponseException | IOException |
                  InternalException e) {
@@ -85,7 +84,36 @@ public class FileUploadServiceImpl implements FileUploadService {
         }
     }
 
+    private String buildObjectName(String folder, String date, String originalFilename) {
+        String uuid = UUID.randomUUID().toString().replaceAll("-", "");
+        String extension = extractExtension(originalFilename);
+        String safeName = extension.isEmpty() ? uuid : uuid + "." + extension;
+        return folder + "/" + date + "/" + safeName;
+    }
 
+    private String extractExtension(String originalFilename) {
+        if (originalFilename == null || originalFilename.isBlank()) {
+            return "";
+        }
+        int dotIndex = originalFilename.lastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == originalFilename.length() - 1) {
+            return "";
+        }
+        return originalFilename.substring(dotIndex + 1).trim();
+    }
 
+    private String buildPublicUrl(String objectName) {
+        return "/api/files/minio/" + encodePathSegment(bucket) + "/" + encodeObjectPath(objectName);
+    }
 
+    private String encodeObjectPath(String objectName) {
+        return Arrays.stream(objectName.split("/"))
+                .map(this::encodePathSegment)
+                .reduce((left, right) -> left + "/" + right)
+                .orElse("");
+    }
+
+    private String encodePathSegment(String segment) {
+        return URLEncoder.encode(segment, StandardCharsets.UTF_8).replace("+", "%20");
+    }
 }

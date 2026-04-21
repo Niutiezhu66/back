@@ -30,8 +30,6 @@ public class QuestionController {
 
         Page<Question> questionPage = new Page<>(page, size);
         questionService.queryQuestionListByPage(questionPage,questionQueryVo);
-        List<Question> records = questionPage.getRecords();
-        System.out.println(records.get(0).getChoices());
         return Result.success(questionPage);
     }
 
@@ -39,6 +37,12 @@ public class QuestionController {
     @Operation(summary = "根据ID查询题目详情", description = "获取指定ID的题目完整信息，包括题目内容、选项、答案等详细数据")  // API描述
     public Result<Question> getQuestionById(@Parameter(description = "题目ID", example = "1") @PathVariable Long id) {
         return questionService.queryQuestionById(id);
+    }
+
+    @PostMapping("/{id}/view")
+    @Operation(summary = "增加题目热度", description = "记录一次题目浏览热度，用于首页热门推荐展示")
+    public Result<String> incrementQuestionView(@Parameter(description = "题目ID", example = "1") @PathVariable Long id) {
+        return questionService.incrementQuestionView(id);
     }
 
     @PostMapping

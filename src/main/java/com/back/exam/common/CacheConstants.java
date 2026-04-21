@@ -25,4 +25,6 @@ public class CacheConstants {
     public static final long DEFAULT_EXPIRE_SECONDS = 1800; // 30分钟
 
     public static final long HOT_DATA_EXPIRE_SECONDS = 3600; // 1小时
+
+    public static final long WEEKLY_STATS_EXPIRE_SECONDS = 604800; // 7天
 }

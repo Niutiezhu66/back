@@ -5,6 +5,7 @@ import com.back.exam.common.Result;
 import com.back.exam.service.StatsService;
 import com.back.exam.vo.DiagnosisResultVo;
 import com.back.exam.vo.StatsVo;
+import com.back.exam.vo.TeacherStatsVo;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,6 +50,30 @@ public class StatsController {
         } catch (Exception e) {
             e.printStackTrace();
             return Result.error("AI 诊断生成失败：" + e.getMessage());
+        }
+    }
+
+    @GetMapping("/teacher/{teacherId}/overview")
+    @Operation(summary = "教师工作台概览", description = "获取教师名下考试数据的聚合统计，不触发AI诊断")
+    public Result<TeacherStatsVo> getTeacherOverview(@PathVariable("teacherId") Long teacherId) {
+        try {
+            TeacherStatsVo result = statsService.generateTeacherOverview(teacherId);
+            return Result.success(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("教师概览获取失败：" + e.getMessage());
+        }
+    }
+
+    @GetMapping("/teacher/{teacherId}")
+    @Operation(summary = "教师学情诊断", description = "获取教师名下所有考试的数据聚合及AI建议")
+    public Result<TeacherStatsVo> getTeacherDiagnosis(@PathVariable("teacherId") Long teacherId) {
+        try {
+            TeacherStatsVo result = statsService.generateTeacherDiagnosis(teacherId);
+            return Result.success(result);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Result.error("AI 教学诊断生成失败：" + e.getMessage());
         }
     }
 } 

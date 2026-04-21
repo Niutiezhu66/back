@@ -6,6 +6,8 @@ import com.back.exam.mapper.UserMapper;
 import com.back.exam.service.UserService;
 import com.back.exam.vo.LoginRequestVo;
 import com.back.exam.vo.RegisterRequestVo;
+import com.back.exam.vo.ChangePasswordVo;
+import com.back.exam.vo.UpdateProfileVo;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import org.springframework.stereotype.Service;
@@ -255,6 +257,67 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return Result.success(students);
     }
 
+    @Override
+    public Result<User> updateProfile(UpdateProfileVo profileVo) {
+        if (profileVo == null || profileVo.getId() == null) {
+            return Result.error("用户信息不完整");
+        }
+        if (!StringUtils.hasText(profileVo.getUsername())) {
+            return Result.error("用户名不能为空");
+        }
+        if (!StringUtils.hasText(profileVo.getRealName())) {
+            return Result.error("姓名不能为空");
+        }
+
+        User currentUser = this.getById(profileVo.getId());
+        if (currentUser == null) {
+            return Result.error("用户不存在");
+        }
+
+        LambdaQueryWrapper<User> usernameWrapper = new LambdaQueryWrapper<>();
+        usernameWrapper.eq(User::getUsername, profileVo.getUsername())
+                .ne(User::getId, profileVo.getId());
+        if (this.count(usernameWrapper) > 0) {
+            return Result.error("用户名已存在");
+        }
+
+        currentUser.setUsername(profileVo.getUsername().trim());
+        currentUser.setRealName(profileVo.getRealName().trim());
+        this.updateById(currentUser);
+        currentUser.setPassword(null);
+        return Result.success(currentUser);
+    }
+
+    @Override
+    public Result<String> changePassword(ChangePasswordVo changePasswordVo) {
+        if (changePasswordVo == null || changePasswordVo.getId() == null) {
+            return Result.error("用户信息不完整");
+        }
+        if (!StringUtils.hasText(changePasswordVo.getOldPassword())) {
+            return Result.error("请输入旧密码");
+        }
+        if (!StringUtils.hasText(changePasswordVo.getNewPassword())) {
+            return Result.error("请输入新密码");
+        }
+        if (changePasswordVo.getNewPassword().trim().length() < 6) {
+            return Result.error("新密码长度不能少于6位");
+        }
+
+        User currentUser = this.getById(changePasswordVo.getId());
+        if (currentUser == null) {
+            return Result.error("用户不存在");
+        }
+        if (!changePasswordVo.getOldPassword().equals(currentUser.getPassword())) {
+            return Result.error("旧密码错误");
+        }
+        if (changePasswordVo.getOldPassword().equals(changePasswordVo.getNewPassword())) {
+            return Result.error("新密码不能与旧密码相同");
+        }
+
+        currentUser.setPassword(changePasswordVo.getNewPassword());
+        this.updateById(currentUser);
+        return Result.success("密码修改成功");
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class) // 保证事务，要么都成功，要么都失败

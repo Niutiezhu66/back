@@ -137,6 +137,9 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     public Paper updatePaper(Integer id, PaperVo paperVo) {
         //1.发布状态下的试卷无法更新
         Paper paper = getById(id);
+        if (paper == null) {
+            throw new RuntimeException("试卷不存在或已被删除");
+        }
         if("PUBLISHED".equals(paper.getStatus())) {
             throw new RuntimeException("发布状态下的试卷无法更新");
         }
@@ -150,12 +153,25 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
         }
 
         //3.更新试卷信息
+        Long originalTeacherId = paper.getTeacherId();
         BeanUtils.copyProperties(paperVo, paper);
+        paper.setTeacherId(originalTeacherId);
         Map<Integer, BigDecimal> questions = paperVo.getQuestions();
+        if (questions == null || questions.isEmpty()) {
+            paper.setQuestionCount(0);
+            paper.setTotalScore(BigDecimal.ZERO);
+            updateById(paper);
+
+            LambdaQueryWrapper<PaperQuestion> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(PaperQuestion::getPaperId, id);
+            paperQuestionService.remove(queryWrapper);
+            return paper;
+        }
+
         paper.setQuestionCount(questions.size());//新的题目数
 
         Optional<BigDecimal> totalScore = questions.values().stream().reduce(BigDecimal::add);//分数累加
-        paper.setTotalScore(totalScore.get()); //试卷总分
+        paper.setTotalScore(totalScore.orElse(BigDecimal.ZERO)); //试卷总分
         updateById(paper); //保存题目
 
         //4.将题目 map 映射为 PaperQuestion 对象
@@ -180,6 +196,9 @@ public class PaperServiceImpl extends ServiceImpl<PaperMapper, Paper> implements
     @Override
     public void deletePaper(Integer id) {
         Paper paper = getById(id);
+        if (paper == null) {
+            throw new RuntimeException("试卷不存在或已被删除");
+        }
         //1.发布状态下的试卷无法删除
         if("PUBLISHED".equals(paper.getStatus())) {
             throw new RuntimeException("发布状态下的试卷无法更新");

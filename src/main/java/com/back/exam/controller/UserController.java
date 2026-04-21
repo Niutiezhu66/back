@@ -4,6 +4,8 @@ import com.back.exam.common.Result;
 import com.back.exam.entity.User;
 import com.back.exam.service.UserService;
 import com.back.exam.vo.LoginRequestVo;
+import com.back.exam.vo.ChangePasswordVo;
+import com.back.exam.vo.UpdateProfileVo;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -90,6 +92,18 @@ public class UserController {
         // 这里可以加上忽略密码修改的逻辑，或者允许管理员直接重置密码
         userService.updateById(user);
         return Result.success("修改成功");
+    }
+
+    @PutMapping("/profile")
+    @Operation(summary = "更新个人资料")
+    public Result<User> updateProfile(@RequestBody UpdateProfileVo profileVo) {
+        return userService.updateProfile(profileVo);
+    }
+
+    @PutMapping("/change-password")
+    @Operation(summary = "修改个人密码")
+    public Result<String> changePassword(@RequestBody ChangePasswordVo changePasswordVo) {
+        return userService.changePassword(changePasswordVo);
     }
 
     // ================== 管理员：删除用户 ==================

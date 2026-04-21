@@ -27,13 +27,25 @@ public class PaperController {
 
 
     @GetMapping("/list")
-    @Operation(summary = "获取试卷列表", description = "支持按名称模糊搜索和状态筛选的试卷列表查询")  // API描述
+    @Operation(summary = "获取试卷列表", description = "支持按名称模糊搜索和状态筛选的试卷列表查询")
     public Result<java.util.List<Paper>> listPapers(
             @Parameter(description = "试卷名称，支持模糊查询") @RequestParam(required = false) String name,
-            @Parameter(description = "试卷状态，可选值：DRAFT/PUBLISHED/STOPPED") @RequestParam(required = false) String status) {
+            @Parameter(description = "试卷状态，可选值：DRAFT/PUBLISHED/STOPPED") @RequestParam(required = false) String status,
+            // 👇 这里是必须要加上的两个参数！后端才能接到前端发来的身份信息
+            @Parameter(description = "当前登录用户ID") @RequestParam(required = false) Long userId,
+            @Parameter(description = "当前登录用户角色") @RequestParam(required = false) String role) {
+
         LambdaQueryWrapper<Paper> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.like(!ObjectUtils.isEmpty(name), Paper::getName, name);
         queryWrapper.eq(!ObjectUtils.isEmpty(status), Paper::getStatus, status);
+
+        if (role != null && "1".equals(role) && userId != null) {
+            queryWrapper.eq(Paper::getTeacherId, userId);
+        }
+
+        // 按创建时间倒序排列
+        queryWrapper.orderByDesc(Paper::getCreateTime);
+
         List<Paper> paperList = paperService.list(queryWrapper);
         return Result.success(paperList);
     }
@@ -88,7 +100,6 @@ public class PaperController {
     @DeleteMapping("/{id}")
     @Operation(summary = "删除试卷", description = "删除指定的试卷，注意：已发布的试卷不能删除")  // API描述
     public Result<Void> deletePaper(@Parameter(description = "试卷ID") @PathVariable Integer id) {
-
         paperService.deletePaper(id);
         return Result.success("试卷成功");
     }

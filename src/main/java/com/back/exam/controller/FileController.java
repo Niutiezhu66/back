@@ -1,18 +1,25 @@
 package com.back.exam.controller;
 
+import io.minio.GetObjectArgs;
+import io.minio.MinioClient;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -20,20 +27,60 @@ import java.nio.file.Paths;
 
 @Slf4j
 @RestController
-@RequestMapping("/files")
+@RequestMapping("/api/files")
 @CrossOrigin
 public class FileController {
+
+    @Autowired
+    private MinioClient minioClient;
+
+    @Value("${minio.bucket}")
+    private String defaultBucket;
 
     @Value("${file.upload.path:./uploads/}")  // 本地文件存储路径
     private String localUploadPath;
 
+    @GetMapping("/minio/{bucket}/**")
+    public void getMinioFile(
+            @PathVariable String bucket,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        String resolvedBucket = (bucket == null || bucket.isBlank()) ? defaultBucket : bucket;
+        String objectPath = request.getRequestURI().substring(("/api/files/minio/" + bucket + "/").length());
+        String decodedObjectPath = URLDecoder.decode(objectPath, StandardCharsets.UTF_8);
+
+        try (InputStream inputStream = minioClient.getObject(
+                GetObjectArgs.builder()
+                        .bucket(resolvedBucket)
+                        .object(decodedObjectPath)
+                        .build())) {
+            String contentType = Files.probeContentType(Paths.get(decodedObjectPath).getFileName());
+            if (contentType == null) {
+                contentType = "application/octet-stream";
+            }
+            response.setContentType(contentType);
+            response.setHeader("Cache-Control", "public, max-age=86400");
+
+            try (OutputStream os = response.getOutputStream()) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = inputStream.read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                }
+                os.flush();
+            }
+        } catch (Exception e) {
+            log.error("MinIO文件访问失败: {}", e.getMessage(), e);
+            response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+        }
+    }
 
     @GetMapping("/**")
     public void getFile(HttpServletRequest request, HttpServletResponse response) {
         try {
             // 获取文件路径  // 提取请求的文件路径
             String requestURI = request.getRequestURI();
-            String filePath = requestURI.substring("/files/".length());
+            String filePath = requestURI.substring("/api/files/".length());
             
             // 构建完整文件路径  // 构建本地文件路径
             Path fullPath = Paths.get(localUploadPath, filePath);

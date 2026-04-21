@@ -11,7 +11,7 @@ import java.util.List;
 @Data
 @Schema(description = "AI智能组卷请求参数")
 public class AiPaperVo {
-
+    private Long teacherId;
     @Schema(description = "试卷名称", 
             example = "中小学成语辨析",
             requiredMode = Schema.RequiredMode.REQUIRED)

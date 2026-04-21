@@ -12,6 +12,8 @@ public interface KimiAiService {
 
     String callKimiAI(String prompt) throws InterruptedException;
 
+    String callKimiAIQuickFail(String prompt) throws InterruptedException;
+
     String buildGradingPrompt(Question question, String userAnswer, Integer maxScore);
 
     String buildSummaryPrompt(Integer totalScore, Integer maxScore, Integer questionCount, Integer correctCount);

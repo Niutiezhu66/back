@@ -61,4 +61,17 @@ public class Question extends BaseEntity {
     @Schema(description = "题目所属分类信息")
     @TableField(exist = false)
     private Category category;
-} 
+
+    @Schema(description = "题目分类名称", example = "Java基础")
+    @TableField(exist = false)
+    private String categoryName;
+
+    @Schema(description = "题目浏览/热度次数", example = "128")
+    @TableField(exist = false)
+    private Integer viewCount;
+
+    @Schema(description = "题目正确率", example = "76")
+    @TableField(exist = false)
+    private Integer correctRate;
+}
+ 

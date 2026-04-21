@@ -20,6 +20,9 @@ public interface QuestionService extends IService<Question> {
     //根据id查题目详情,包括选项和答案
     Result<Question> queryQuestionById(Long id);
 
+    //增加题目热度
+    Result<String> incrementQuestionView(Long id);
+
     //新增题目
     Result<Question> saveQuestion(Question question);
 

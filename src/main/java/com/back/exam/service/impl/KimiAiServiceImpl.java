@@ -3,14 +3,22 @@ package com.back.exam.service.impl;
 import com.alibaba.fastjson2.JSONObject;
 import com.back.exam.entity.Question;
 import com.back.exam.service.KimiAiService;
+import com.back.exam.utils.RedisUtils;
 import com.back.exam.vo.AiGenerateRequestVo;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +41,20 @@ public class KimiAiServiceImpl implements KimiAiService {
     @Value("${kimi.api.maxTokens}")
     private Integer maxTokens;
 
+    @Autowired
+    private RedisUtils redisUtils;
+
+    private static final long KIMI_RESULT_CACHE_TTL_SECONDS = 15 * 60;
+    private static final long KIMI_LOCK_TTL_SECONDS = 45;
+    private static final long KIMI_FOLLOWER_WAIT_MILLIS = 5000;
+    private static final long KIMI_FOLLOWER_POLL_MILLIS = 250;
+    private static final int KIMI_MAX_CONCURRENT_REQUESTS = 2;
+    private static final long KIMI_ACQUIRE_TIMEOUT_MILLIS = 1500;
+    private static final long KIMI_RATE_LIMIT_BASE_WAIT_MILLIS = 3000;
+    private static final long KIMI_GENERAL_BASE_WAIT_MILLIS = 1000;
+    private static final int KIMI_DEFAULT_MAX_TRY = 3;
+    private static final int KIMI_QUICK_FAIL_MAX_TRY = 1;
+    private static final Semaphore KIMI_CONCURRENCY_GUARD = new Semaphore(KIMI_MAX_CONCURRENT_REQUESTS);
 
     /**
      * 构建发送给AI的提示词
@@ -140,60 +162,209 @@ public class KimiAiServiceImpl implements KimiAiService {
 
     @Override
     public String callKimiAI(String prompt) throws InterruptedException {
+        return callKimiAIInternal(prompt, false);
+    }
 
-        //1.构建重试代码结构（最多3次重试）
-        int maxTry = 3; //最多3次重试
-        for (int i = 0; i < maxTry; i++) {
+    @Override
+    public String callKimiAIQuickFail(String prompt) throws InterruptedException {
+        return callKimiAIInternal(prompt, true);
+    }
+
+    private String callKimiAIInternal(String prompt, boolean quickFail) throws InterruptedException {
+        String normalizedPrompt = normalizePrompt(prompt);
+        String promptHash = sha256(normalizedPrompt);
+        String resultKey = buildResultKey(promptHash);
+        String lockKey = buildLockKey(promptHash);
+
+        String cachedResult = getCachedResult(resultKey);
+        if (cachedResult != null) {
+            log.info("Kimi prompt cache hit, hash={}, length={}", shortHash(promptHash), normalizedPrompt.length());
+            return cachedResult;
+        }
+
+        Boolean lockAcquired = redisUtils.setIfAbsent(lockKey, "1", KIMI_LOCK_TTL_SECONDS);
+        if (Boolean.TRUE.equals(lockAcquired)) {
+            log.info("Kimi prompt lock acquired, hash={}, length={}", shortHash(promptHash), normalizedPrompt.length());
             try {
-                Map<String,String> userMap = new HashMap<>();
-                userMap.put("role","user");
-                userMap.put("content",prompt); //提示词
-                List<Map> messagesList = new ArrayList<>();
-                messagesList.add(userMap);
-
-                Map<String,Object> requestBody = new HashMap<>();
-                requestBody.put("model",model);
-                requestBody.put("temperature", temperature);
-                requestBody.put("max_tokens", maxTokens);//最大token值，kimi里面不设置的话默认 1024，不够用
-                requestBody.put("messages",messagesList);
-
-                //2. 发起网络请求调用
-                String result = webClient.post()
-                        .bodyValue(requestBody)
-                        .retrieve() //准备了
-                        .bodyToMono(String.class)
-                        .block();//同步(没用异步)
-
-                //fastJson2工具  JsonObject JsonArray
-                JSONObject resultJsonObject = JSONObject.parseObject(result);
-
-                //错误结果：https://platform.moonshot.cn/docs/api/chat#错误说明
-//                if (resultJsonObject != null && resultJsonObject.containsKey("error")) {
-//                    throw new RuntimeException("访问错误了，错误信息为:" + resultJsonObject.getJSONObject("error").getString("message"));
-//                }
-                if (resultJsonObject != null && resultJsonObject.containsKey("error")) {
-                    String msg = resultJsonObject.getJSONObject("error").getString("message");
-                    if (msg != null && msg.contains("429")) {
-                        throw new RuntimeException("AI 接口被限流，请稍后再试");
-                    }
-                    throw new RuntimeException("访问错误了，错误信息为:" + msg);
+                String result = doCallKimiAIWithRetry(normalizedPrompt, quickFail ? KIMI_QUICK_FAIL_MAX_TRY : KIMI_DEFAULT_MAX_TRY);
+                redisUtils.set(resultKey, result, KIMI_RESULT_CACHE_TTL_SECONDS);
+                return result;
+            } catch (RuntimeException e) {
+                String fallbackResult = getFallbackResult(resultKey, promptHash, e);
+                if (fallbackResult != null) {
+                    return fallbackResult;
                 }
-
-                //正确结果，格式见kimi官网
-                String content = resultJsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
-
-                if (content == null || content.isEmpty()){
-                    throw new RuntimeException("调用成功！但是没有返回结果！！");
-                }
-
-                return content;
-
-            }catch (Exception e) {
-                e.printStackTrace();
-                Thread.sleep(1000);
+                throw e;
+            } finally {
+                redisUtils.delete(lockKey);
             }
         }
+
+        log.info("Kimi prompt wait for existing result, hash={}, length={}", shortHash(promptHash), normalizedPrompt.length());
+        String waitedResult = waitForCachedResult(resultKey, quickFail);
+        if (waitedResult != null) {
+            log.info("Kimi prompt follower reused result, hash={}", shortHash(promptHash));
+            return waitedResult;
+        }
+
+        log.warn("Kimi prompt wait timeout, fallback to direct call, hash={}, quickFail={}", shortHash(promptHash), quickFail);
+        try {
+            String fallbackResult = doCallKimiAIWithRetry(normalizedPrompt, quickFail ? KIMI_QUICK_FAIL_MAX_TRY : KIMI_DEFAULT_MAX_TRY);
+            redisUtils.set(resultKey, fallbackResult, KIMI_RESULT_CACHE_TTL_SECONDS);
+            return fallbackResult;
+        } catch (RuntimeException e) {
+            String cachedFallback = getFallbackResult(resultKey, promptHash, e);
+            if (cachedFallback != null) {
+                return cachedFallback;
+            }
+            throw e;
+        }
+    }
+
+    private String getFallbackResult(String resultKey, String promptHash, RuntimeException originalException) {
+        String cachedResult = getCachedResult(resultKey);
+        if (cachedResult == null) {
+            return null;
+        }
+        log.warn("Kimi call failed, reused cached result from Redis, hash={}, reason={}", shortHash(promptHash), originalException.getMessage());
+        return cachedResult;
+    }
+
+    private String doCallKimiAIWithRetry(String prompt, int maxTry) throws InterruptedException {
+        RuntimeException lastException = null;
+        for (int i = 0; i < maxTry; i++) {
+            try {
+                if (!KIMI_CONCURRENCY_GUARD.tryAcquire(KIMI_ACQUIRE_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                    throw new RuntimeException("AI 服务繁忙，请稍后再试");
+                }
+                try {
+                    Map<String, String> userMap = new HashMap<>();
+                    userMap.put("role", "user");
+                    userMap.put("content", prompt);
+                    List<Map> messagesList = new ArrayList<>();
+                    messagesList.add(userMap);
+
+                    Map<String, Object> requestBody = new HashMap<>();
+                    requestBody.put("model", model);
+                    requestBody.put("temperature", temperature);
+                    requestBody.put("max_tokens", maxTokens);
+                    requestBody.put("messages", messagesList);
+
+                    String result = webClient.post()
+                            .bodyValue(requestBody)
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .block(Duration.ofSeconds(60));
+
+                    JSONObject resultJsonObject = JSONObject.parseObject(result);
+                    if (resultJsonObject != null && resultJsonObject.containsKey("error")) {
+                        String msg = resultJsonObject.getJSONObject("error").getString("message");
+                        if (msg != null && msg.contains("429")) {
+                            throw new RuntimeException("AI 接口被限流，请稍后再试");
+                        }
+                        throw new RuntimeException("访问错误了，错误信息为:" + msg);
+                    }
+
+                    String content = resultJsonObject.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
+                    if (content == null || content.isBlank()) {
+                        throw new RuntimeException("调用成功！但是没有返回结果！！");
+                    }
+                    return content;
+                } finally {
+                    KIMI_CONCURRENCY_GUARD.release();
+                }
+            } catch (WebClientResponseException.TooManyRequests e) {
+                lastException = new RuntimeException("AI 接口被限流，请稍后再试", e);
+                long waitMillis = resolveRetryDelayMillis(e, i);
+                log.warn("Kimi rate limited on attempt {}/{}, wait={}ms", i + 1, maxTry, waitMillis);
+                if (i < maxTry - 1) {
+                    Thread.sleep(waitMillis);
+                }
+            } catch (RuntimeException e) {
+                lastException = e;
+                log.warn("Kimi call failed on attempt {}/{}, message={}", i + 1, maxTry, e.getMessage());
+                if (i < maxTry - 1) {
+                    Thread.sleep((long) Math.pow(2, i) * KIMI_GENERAL_BASE_WAIT_MILLIS);
+                }
+            } catch (Exception e) {
+                lastException = new RuntimeException(e.getMessage(), e);
+                log.warn("Kimi call failed on attempt {}/{}, message={}", i + 1, maxTry, e.getMessage());
+                if (i < maxTry - 1) {
+                    Thread.sleep((long) Math.pow(2, i) * KIMI_GENERAL_BASE_WAIT_MILLIS);
+                }
+            }
+        }
+        if (lastException != null) {
+            throw lastException;
+        }
         throw new RuntimeException("已经重试%s次无返回结果，调用失败".formatted(maxTry));
+    }
+
+    private String normalizePrompt(String prompt) {
+        if (prompt == null || prompt.trim().isEmpty()) {
+            throw new RuntimeException("prompt不能为空");
+        }
+        return prompt.trim().replace("\r\n", "\n");
+    }
+
+    private String buildResultKey(String promptHash) {
+        return "ai:kimi:result:" + promptHash;
+    }
+
+    private String buildLockKey(String promptHash) {
+        return "ai:kimi:lock:" + promptHash;
+    }
+
+    private String getCachedResult(String key) {
+        Object value = redisUtils.get(key);
+        if (value == null) {
+            return null;
+        }
+        String content = value.toString();
+        return content.isBlank() ? null : content;
+    }
+
+    private String waitForCachedResult(String resultKey, boolean quickFail) throws InterruptedException {
+        long waitMillis = quickFail ? KIMI_FOLLOWER_POLL_MILLIS : KIMI_FOLLOWER_WAIT_MILLIS;
+        long deadline = System.currentTimeMillis() + waitMillis;
+        while (System.currentTimeMillis() < deadline) {
+            String cachedResult = getCachedResult(resultKey);
+            if (cachedResult != null) {
+                return cachedResult;
+            }
+            Thread.sleep(KIMI_FOLLOWER_POLL_MILLIS);
+        }
+        return null;
+    }
+
+    private String sha256(String text) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(text.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("无法生成prompt哈希", e);
+        }
+    }
+
+    private String shortHash(String promptHash) {
+        return promptHash.substring(0, Math.min(8, promptHash.length()));
+    }
+
+    private long resolveRetryDelayMillis(WebClientResponseException.TooManyRequests exception, int attempt) {
+        String retryAfter = exception.getHeaders().getFirst("Retry-After");
+        if (retryAfter != null) {
+            try {
+                long seconds = Long.parseLong(retryAfter.trim());
+                return Math.max(seconds * 1000L, KIMI_RATE_LIMIT_BASE_WAIT_MILLIS);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return (long) Math.pow(2, attempt) * KIMI_RATE_LIMIT_BASE_WAIT_MILLIS;
     }
 
     @Override

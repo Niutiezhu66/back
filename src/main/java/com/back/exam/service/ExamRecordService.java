@@ -10,7 +10,7 @@ import java.util.List;
 
 public interface ExamRecordService extends IService<ExamRecord> {
 
-    void pageExamRecords(Page<ExamRecord> examRecordPage, String studentName, Integer status, String startDate, String endDate);
+    void pageExamRecords(Page<ExamRecord> examRecordPage, String studentName, String studentNumber, Integer status, String startDate, String endDate);
 
     void RemoveExamRecordById(Integer id);
 

@@ -8,6 +8,8 @@ import com.back.exam.entity.PaperQuestion;
 import com.back.exam.entity.Question;
 import com.back.exam.entity.QuestionAnswer;
 import com.back.exam.entity.QuestionChoice;
+import com.back.exam.mapper.AnswerRecordMapper;
+import com.back.exam.mapper.CategoryMapper;
 import com.back.exam.mapper.PaperQuestionMapper;
 import com.back.exam.mapper.QuestionAnswerMapper;
 import com.back.exam.mapper.QuestionChoiceMapper;
@@ -31,8 +33,13 @@ import org.springframework.util.ObjectUtils;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -50,6 +57,10 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
     private QuestionChoiceMapper questionChoiceMapper;
     @Autowired
     private QuestionAnswerMapper questionAnswerMapper;
+    @Autowired
+    private AnswerRecordMapper answerRecordMapper;
+    @Autowired
+    private CategoryMapper categoryMapper;
     @Autowired
     private PaperQuestionMapper paperQuestionMapper;
     @Autowired
@@ -79,20 +90,27 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
         }
 
         //3.查询题目对应答案
-        QuestionAnswer questionAnswer = questionAnswerMapper.selectById(id);
+        LambdaQueryWrapper<QuestionAnswer> answerWrapper = new LambdaQueryWrapper<>();
+        answerWrapper.eq(QuestionAnswer::getQuestionId, id);
+        QuestionAnswer questionAnswer = questionAnswerMapper.selectOne(answerWrapper);
 
         //4.将选项和答案赋给Question对象
         question.setChoices(questionChoices);
         question.setAnswer(questionAnswer);
+        fillQuestionViewCount(question);
 
-        //5.redis缓存处理(在子线程处理即可)
-        Thread thread = new Thread(() -> {
-            incrementQuestionScore(id);
-        });
-        thread.start();
-
-        //6.返回结果
+        //5.返回结果
         return Result.success(question);
+    }
+
+    @Override
+    public Result<String> incrementQuestionView(Long id) {
+        Question question = getById(id);
+        if (question == null) {
+            return Result.error("该题目不存在");
+        }
+        incrementQuestionScore(id);
+        return Result.success("热度更新成功");
     }
 
     private void incrementQuestionScore(Long questionId) {
@@ -100,7 +118,104 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
          * 在 redis 中进行题目热度增加,实现题目热度榜
          * @param questionId
          */
-        redisUtils.zIncrementScore(CacheConstants.POPULAR_QUESTIONS_KEY,questionId,1);
+        String weeklyKey = getCurrentWeekPopularQuestionsKey();
+        redisUtils.zIncrementScore(weeklyKey, questionId, 1);
+        redisUtils.expire(weeklyKey, getCurrentWeekExpireSeconds());
+    }
+
+    private void fillQuestionViewCount(Question question) {
+        if (question == null || question.getId() == null) {
+            return;
+        }
+        Double score = redisUtils.zScore(getCurrentWeekPopularQuestionsKey(), question.getId());
+        question.setViewCount(score == null ? 0 : score.intValue());
+    }
+
+    private void fillQuestionViewCount(List<Question> questionList) {
+        questionList.forEach(this::fillQuestionViewCount);
+    }
+
+    private void fillQuestionCategoryName(Question question) {
+        if (question == null) {
+            return;
+        }
+        if (question.getCategoryName() == null && question.getCategory() != null) {
+            question.setCategoryName(question.getCategory().getName());
+            return;
+        }
+        if (question.getCategoryName() == null && question.getCategoryId() != null) {
+            com.back.exam.entity.Category category = categoryMapper.selectById(question.getCategoryId());
+            question.setCategoryName(category == null ? null : category.getName());
+        }
+    }
+
+    private void fillQuestionCategoryName(List<Question> questionList) {
+        questionList.forEach(this::fillQuestionCategoryName);
+    }
+
+    private void fillQuestionCorrectRate(Question question) {
+        if (question == null || question.getId() == null) {
+            return;
+        }
+        LocalDateTime weekStart = getCurrentWeekStart();
+        LocalDateTime weekEnd = weekStart.plusWeeks(1);
+        int numerator = 0;
+        int denominator = 0;
+        List<Map<String, Object>> stats = answerRecordMapper.selectQuestionCorrectRateStats(question.getId(), weekStart, weekEnd);
+        if (!stats.isEmpty()) {
+            Map<String, Object> stat = stats.get(0);
+            numerator = stat.get("numerator") == null ? 0 : new BigDecimal(stat.get("numerator").toString()).intValue();
+            denominator = stat.get("denominator") == null ? 0 : new BigDecimal(stat.get("denominator").toString()).intValue();
+        }
+
+        int correctRate = denominator == 0 ? 0 : (int) Math.round((double) numerator * 100 / denominator);
+        question.setCorrectRate(correctRate);
+    }
+
+    private void fillQuestionCorrectRate(List<Question> questionList) {
+        questionList.forEach(this::fillQuestionCorrectRate);
+    }
+
+    private void enrichPopularQuestion(Question question) {
+        Long id = question.getId();
+        LambdaQueryWrapper<QuestionAnswer> wrapper1 = new LambdaQueryWrapper<>();
+        wrapper1.eq(QuestionAnswer::getQuestionId,id);
+        QuestionAnswer questionAnswer = questionAnswerMapper.selectOne(wrapper1);
+        question.setAnswer(questionAnswer);
+
+        if ("CHOICE".equals(question.getType())){
+            LambdaQueryWrapper<QuestionChoice> wrapper2 = new LambdaQueryWrapper<>();
+            wrapper2.eq(QuestionChoice::getQuestionId,id).orderByAsc(QuestionChoice::getSort);
+            List<QuestionChoice> questionChoices = questionChoiceMapper.selectList(wrapper2);
+            question.setChoices(questionChoices);
+        }
+
+        fillQuestionCategoryName(question);
+        fillQuestionViewCount(question);
+        fillQuestionCorrectRate(question);
+    }
+
+    private void enrichPopularQuestionList(List<Question> questionList) {
+        questionList.forEach(this::enrichPopularQuestion);
+    }
+
+    private String getCurrentWeekPopularQuestionsKey() {
+        return CacheConstants.POPULAR_QUESTIONS_KEY + ":" + getCurrentWeekToken();
+    }
+
+    private String getCurrentWeekToken() {
+        LocalDate weekStart = LocalDate.now().with(DayOfWeek.MONDAY);
+        return weekStart.toString();
+    }
+
+    private LocalDateTime getCurrentWeekStart() {
+        return LocalDate.now().with(DayOfWeek.MONDAY).atStartOfDay();
+    }
+
+    private long getCurrentWeekExpireSeconds() {
+        LocalDateTime nextWeekStart = getCurrentWeekStart().plusWeeks(1);
+        long seconds = java.time.Duration.between(LocalDateTime.now(), nextWeekStart).getSeconds();
+        return Math.max(seconds, CacheConstants.WEEKLY_STATS_EXPIRE_SECONDS);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -213,8 +328,8 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
         questionChoiceMapper.delete(wrapper2);
 
         //4.删除 redis 缓存
-        Thread thread = new Thread(()->{
-            redisUtils.zRemove(CacheConstants.POPULAR_QUESTIONS_KEY,id);
+        Thread thread = new Thread(() -> {
+            redisUtils.zRemove(getCurrentWeekPopularQuestionsKey(), id);
         });
         thread.start();
 
@@ -224,62 +339,53 @@ public class QuestionServiceImpl extends ServiceImpl<QuestionMapper, Question> i
 
     @Override
     public Result<List<Question>> getPopularQuestion(Integer size) {
-        //用于存储热门题目
         List<Question> questionList = new ArrayList<>();
+        Set<Object> popularIds = redisUtils.zReverseRange(getCurrentWeekPopularQuestionsKey(), 0, size - 1);
 
-        //1.再redis中取出热门题目id(倒序)
-        Set<Object> popularIds = redisUtils.zReverseRange(CacheConstants.POPULAR_QUESTIONS_KEY, 0, size-1);
-
-        //2.根据查询的id查询对应题目
-        if(!ObjectUtils.isEmpty(popularIds)){
-            //将id转化成Long类型
-            List<Long> Ids = popularIds.stream()
+        if (!ObjectUtils.isEmpty(popularIds)) {
+            List<Long> ids = popularIds.stream()
                     .map(Object::toString)
                     .map(Long::valueOf)
                     .collect(Collectors.toList());
-            //查询对应题目（为保持顺序使用for循环）
-            for (Long id : Ids) {
-                Question question = getById(id);
-                //校验：id存在，但题目已经被删除. redis和mysql数据不同步问题
-                if (question!=null) questionList.add(question);
+            for (Long id : ids) {
+                Question question = questionMapper.selectQuestionWithCategory(id);
+                if (question != null) {
+                    questionList.add(question);
+                }
             }
         }
 
-        //3.检查题目集合数量是否满足size
         int lack = size - questionList.size();
-        if (lack > 0) { //热门题目数量不足，查询最新的 lack 个题目加入集合
+        if (lack > 0) {
+            LocalDateTime weekStart = getCurrentWeekStart();
+            List<Question> fallbackList = answerRecordMapper.selectWeeklyPopularFallbackQuestions(
+                    lack,
+                    weekStart,
+                    weekStart.plusWeeks(1)
+            );
+            Map<Long, Question> merged = new java.util.LinkedHashMap<>();
+            questionList.forEach(question -> merged.put(question.getId(), question));
+            fallbackList.forEach(question -> merged.putIfAbsent(question.getId(), question));
+            questionList = new ArrayList<>(merged.values());
+        }
+
+        if (questionList.size() < size) {
             LambdaQueryWrapper<Question> queryWrapper = new LambdaQueryWrapper<>();
             queryWrapper.orderByDesc(Question::getCreateTime);
-            //不能包括已经查出来的题目
             List<Long> existIds = questionList.stream().map(Question::getId).collect(Collectors.toList());
-            if (!existIds.isEmpty()){
+            if (!existIds.isEmpty()) {
                 queryWrapper.notIn(Question::getId, existIds);
             }
-            //只查询 lack 条数据
-            queryWrapper.last("limit "+lack);
-            List<Question> list = list(queryWrapper);//新数据集合
-            questionList.addAll(list); //加入原有集合
+            queryWrapper.last("limit " + (size - questionList.size()));
+            List<Question> latestList = list(queryWrapper);
+            questionList.addAll(latestList);
         }
 
-        //4.给题目赋上答案和选项（选择题）
-        questionList.forEach(question -> {
-            Long id = question.getId(); //获取题目id
-            //根据id查询题目答案
-            LambdaQueryWrapper<QuestionAnswer> wrapper1 = new LambdaQueryWrapper<>();
-            wrapper1.eq(QuestionAnswer::getQuestionId,id);
-            QuestionAnswer questionAnswer = questionAnswerMapper.selectOne(wrapper1);
-            question.setAnswer(questionAnswer);
+        enrichPopularQuestionList(questionList);
+        questionList = questionList.stream()
+                .limit(size)
+                .collect(Collectors.toList());
 
-            //若是选择题，则获取选项
-            if ("CHOICE".equals(question.getType())){
-                LambdaQueryWrapper<QuestionChoice> wrapper2 = new LambdaQueryWrapper<>();
-                wrapper2.eq(QuestionChoice::getQuestionId,id).orderByAsc(QuestionChoice::getSort);
-                List<QuestionChoice> questionChoices = questionChoiceMapper.selectList(wrapper2);
-                question.setChoices(questionChoices);
-            }
-        });
-
-        //5.返回
         return Result.success(questionList);
     }
 

@@ -4,6 +4,8 @@ import com.back.exam.common.Result;
 import com.back.exam.entity.User;
 import com.back.exam.vo.LoginRequestVo;
 import com.back.exam.vo.RegisterRequestVo;
+import com.back.exam.vo.ChangePasswordVo;
+import com.back.exam.vo.UpdateProfileVo;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.back.exam.vo.TeacherStudentVO;
 import java.util.List;
@@ -25,6 +27,10 @@ public interface UserService extends IService<User> {
     Result<String> unbindStudent(Long teacherId, Long studentId);
 
     Result<List<TeacherStudentVO>> getAllTeacherStudentRelations();
+
+    Result<User> updateProfile(UpdateProfileVo profileVo);
+
+    Result<String> changePassword(ChangePasswordVo changePasswordVo);
 
     boolean deleteUserAndRelations(Long id);
 }

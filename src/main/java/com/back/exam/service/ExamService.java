@@ -7,17 +7,17 @@ import com.baomidou.mybatisplus.extension.service.IService;
 
 import java.util.List;
 
-
 public interface ExamService extends IService<ExamRecord> {
 
     ExamRecord saveExam(StartExamVo startExamVo);
 
     ExamRecord getExamRecordDetail(Integer id);
 
-    void submitExam(Integer examRecordId, List<SubmitAnswerVo> answers) throws InterruptedException;
+    ExamRecord submitExam(Integer examRecordId, List<SubmitAnswerVo> answers);
 
-    ExamRecord gradeExam(Integer examRecordId) throws InterruptedException;
+    ExamRecord gradeExam(Integer examRecordId);
+
+    ExamRecord performGradingTask(Integer examRecordId);
 
     List<ExamRecord> getUserExamRecords(Long userId);
 }
- 
